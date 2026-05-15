@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+files="$(git diff --cached --name-only --diff-filter=ACMR)"
+[ -z "$files" ] && exit 0
+
+# shellcheck disable=SC2086
+bun oxlint --fix --no-error-on-unmatched-pattern $files
+# shellcheck disable=SC2086
+bun oxfmt --write --no-error-on-unmatched-pattern $files
+
+# shellcheck disable=SC2086
+git add -- $files
+
+bun tsc --noEmit
+AGENT=1 bun test
