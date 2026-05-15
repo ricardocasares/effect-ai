@@ -1,4 +1,4 @@
-import { Config, Effect, LogLevel, Redacted } from "effect";
+import { Config, Effect, LogLevel } from "effect";
 
 export const AppConfig = Config.all({
   logPretty: Config.boolean("LOG_PRETTY").pipe(Config.withDefault(false)),
@@ -13,5 +13,3 @@ export const AppConfig = Config.all({
 export class ConfigService extends Effect.Service<ConfigService>()("@/ConfigService", {
   effect: AppConfig,
 }) {}
-
-export const redact = (value: Redacted.Redacted): string => Redacted.value(value);

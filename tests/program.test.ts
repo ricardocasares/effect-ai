@@ -1,33 +1,35 @@
 import { expect, test } from "bun:test";
-import { Array, ConfigProvider, Effect, Layer, Ref } from "effect";
-import * as Console from "effect/Console";
-import { ConfigService } from "@/config";
-import { InputService, program } from "@/program";
+import { Array, Effect, Layer, Mailbox, Ref, Scope, Stream } from "effect";
+import { Terminal } from "@effect/platform";
+import { Chat, LanguageModel } from "@effect/ai";
+import { program } from "@/program";
 
-const testConfigProvider = ConfigProvider.fromMap(
-  new Map([
-    ["OPENAI_API_KEY", "test"],
-    ["OPENAI_API_URL", "https://api.openai.com/v1"],
-    ["OPENAI_MODEL", "gpt-4o-mini"],
-    ["LOG_LEVEL", "INFO"],
-    ["LOG_PRETTY", "false"],
-  ]),
-);
+const TestTerminal = (countRef: Ref.Ref<number>, linesRef: Ref.Ref<string[]>) =>
+  Layer.succeed(Terminal.Terminal, {
+    columns: Effect.succeed(80),
+    rows: Effect.succeed(24),
+    isTTY: Effect.succeed(true),
+    readInput: Effect.gen(function* () {
+      yield* Scope.Scope;
+      return yield* Mailbox.make<Terminal.UserInput>();
+    }),
+    readLine: Ref.updateAndGet(countRef, (n) => n + 1).pipe(Effect.map(() => "/exit")),
+    display: (text: string) => Ref.update(linesRef, (lines) => Array.appendAll(lines, [text])),
+  });
 
-const TestConsole = (linesRef: Ref.Ref<string[]>) =>
-  Effect.gen(function* () {
-    const baseConsole = yield* Effect.console;
-    return Console.setConsole({
-      ...baseConsole,
-      log: (...args: ReadonlyArray<unknown>) =>
-        Ref.update(linesRef, (lines) =>
-          Array.appendAll(
-            lines,
-            args.map((value) => `${value}`),
-          ),
-        ),
-    });
-  }).pipe(Layer.unwrapEffect);
+const chatLayer = Effect.gen(function* () {
+  const languageModel = yield* LanguageModel.make({
+    generateText: () => Effect.succeed([]),
+    streamText: () => Stream.empty,
+  });
+  const chat = yield* Chat.empty.pipe(
+    Effect.provide(Layer.succeed(LanguageModel.LanguageModel, languageModel)),
+  );
+  return Layer.mergeAll(
+    Layer.succeed(Chat.Chat, chat),
+    Layer.succeed(LanguageModel.LanguageModel, languageModel),
+  );
+}).pipe(Layer.unwrapEffect);
 
 test("program exits on /exit", async () => {
   const [calls, lines] = await Effect.runPromise(
@@ -36,15 +38,8 @@ test("program exits on /exit", async () => {
       const linesRef = yield* Ref.make(Array.empty<string>());
 
       yield* program.pipe(
-        Effect.provide(
-          Layer.succeed(InputService, {
-            readLine: () =>
-              Ref.updateAndGet(countRef, (n) => n + 1).pipe(Effect.map(() => "/exit")),
-          }),
-        ),
-        Effect.provide(ConfigService.Default),
-        Effect.withConfigProvider(testConfigProvider),
-        Effect.provide(TestConsole(linesRef)),
+        Effect.provide(chatLayer),
+        Effect.provide(TestTerminal(countRef, linesRef)),
       );
 
       const calls = yield* Ref.get(countRef);
@@ -54,5 +49,5 @@ test("program exits on /exit", async () => {
   );
 
   expect(calls).toBe(1);
-  expect(lines).toEqual(["simple ai chat. type /exit to quit.", "bye."]);
+  expect(lines).toEqual(["simple ai chat. type /exit to quit.\n", "you> ", "bye.\n"]);
 });
